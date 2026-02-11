@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<title>COUNT RAID – หลักการนับ</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<style>
+body{
+  margin:0;
+  background:#000;
+  color:#eaffff;
+  font-family:system-ui,sans-serif;
+  text-align:center;
+}
+.card{
+  background:#0b0b0b;
+  border:1px solid #00ffcc;
+  box-shadow:0 0 20px #00ffcc55;
+  padding:20px;
+  border-radius:16px;
+  max-width:420px;
+  margin:20px auto;
+}
+input,button{
+  width:100%;
+  padding:12px;
+  margin:6px 0;
+  border-radius:10px;
+  border:none;
+  font-size:16px;
+}
+input{background:#111;color:#fff}
+button{
+  background:#00ffcc;
+  color:#000;
+  font-weight:bold;
+}
+.hidden{display:none}
+.scoreRow{
+  display:flex;
+  justify-content:space-between;
+}
+</style>
+</head>
+
+<body>
+
+<h1>🎮 COUNT RAID</h1>
+<p>🧠 เกมหลักการนับคณิตศาสตร์</p>
+
+<div class="card" id="lobby">
+  <input id="playerName" placeholder="ชื่อผู้เล่น">
+  <input id="roomInput" placeholder="รหัสห้อง (เว้นว่างเพื่อสุ่ม)">
+  <button onclick="createRoom()">➕ สร้างห้อง</button>
+  <button onclick="joinRoom()">➡️ เข้าห้อง</button>
+  <div id="roomCode"></div>
+</div>
+
+<div class="card hidden" id="waiting">
+  <h2>⏳ รอเพื่อนเข้าห้อง</h2>
+  <p id="waitingRoomCode"></p>
+  <div id="playerList"></div>
+  <button id="startBtn" class="hidden" onclick="startGame()">▶️ เริ่มเกม</button>
+</div>
+
+<div class="card hidden" id="game">
+  <h3 id="question"></h3>
+  <input id="answerInput" placeholder="พิมพ์คำตอบเป็นตัวเลข">
+  <button onclick="submitAnswer()">ส่งคำตอบ</button>
+  <p id="result"></p>
+
+  <button id="restartBtn" class="hidden" onclick="restartGame()">🔄 เริ่มใหม่</button>
+
+  <h3>🏆 คะแนน</h3>
+  <div id="scoreBoard"></div>
+</div>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/12.8.0/firebase-app.js";
+import { getDatabase, ref, set, update, onValue, get }
+from "https://www.gstatic.com/firebasejs/12.8.0/firebase-database.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyAScwLSlNF1i0cAAT-xadJTFOgGUEsIilk",
+  authDomain: "count-raid-game.firebaseapp.com",
+  databaseURL: "https://count-raid-game-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "count-raid-game"
+};
+const app = initializeApp(firebaseConfig);
+const db = getDatabase(app);
+
+/* ===== STATE ===== */
+let roomCode="", playerId="", playerName="";
+
+/* ===== QUESTIONS (15 ข้อ) ===== */
+const questions = [
+  { q:"มีเสื้อ 3 ตัว และกางเกง 2 ตัว แต่งตัวได้กี่แบบ", a:6 },
+  { q:"เรียงตัวอักษร A B C ได้กี่แบบ", a:6 },
+  { q:"เลือกหมวก 2 ใบ จาก 4 ใบ (ไม่เรียงลำดับ)", a:6 },
+  { q:"เลือกผลไม้ 1 อย่าง จาก 3 อย่าง", a:3 },
+  { q:"มีทางเข้า 2 ทาง และทางออก 3 ทาง เดินได้กี่วิธี", a:6 },
+
+  { q:"มีรองเท้า 4 คู่ และถุงเท้า 3 คู่ เลือกใส่ได้กี่แบบ", a:12 },
+  { q:"เลือกตัวเลข 1 หลัก จาก 0–9 ได้กี่แบบ", a:10 },
+  { q:"เลือกนักเรียน 2 คน จาก 5 คน (ไม่เรียงลำดับ)", a:10 },
+  { q:"โยนเหรียญ 2 เหรียญ ผลลัพธ์มีกี่แบบ", a:4 },
+  { q:"โยนลูกเต๋า 1 ลูก ผลลัพธ์มีกี่แบบ", a:6 },
+  { q:"เลือกอาหารจาก 3 ร้าน ร้านละ 3 เมนู ได้กี่แบบ", a:27 },
+  { q:"รหัสผ่านเป็นตัวเลข 2 หลัก (ซ้ำได้) มีกี่แบบ", a:100 },
+  { q:"เลือกหนังสือ 1 เล่ม จาก 8 เล่ม", a:8 },
+  { q:"จาก A ไป B มี 2 ทาง จาก B ไป C มี 4 ทาง ไป A→C ได้กี่วิธี", a:8 },
+  { q:"เลือกเสื้อ 2 ตัว จาก 5 ตัว (ไม่เรียงลำดับ)", a:10 }
+];
+
+/* ===== ROOM / GAME LOGIC (เหมือนเดิม) ===== */
+function randomRoom(){ return Math.random().toString(36).substring(2,6).toUpperCase(); }
+
+window.createRoom = async ()=>{
+  playerName = playerNameInput.value.trim();
+  if(!playerName) return alert("ใส่ชื่อก่อน");
+  roomCode = roomInput.value || randomRoom();
+  playerId = Date.now().toString();
+  await set(ref(db,"rooms/"+roomCode),{
+    host:playerId, started:false, questionIndex:0, players:{}
+  });
+  joinRoom(true);
+};
+
+window.joinRoom = async (host=false)=>{
+  playerName = playerNameInput.value.trim();
+  if(!playerName) return alert("ใส่ชื่อก่อน");
+  if(!host){ roomCode = roomInput.value.toUpperCase(); playerId = Date.now().toString(); }
+  const roomRef = ref(db,"rooms/"+roomCode);
+  const snap = await get(roomRef);
+  if(!snap.exists()) return alert("ไม่พบห้อง");
+  await update(ref(db,"rooms/"+roomCode+"/players/"+playerId),{name:playerName,score:0});
+  lobby.classList.add("hidden"); waiting.classList.remove("hidden");
+  onValue(roomRef,(s)=>{
+    const d=s.val();
+    renderPlayers(d.players);
+    if(playerId===d.host) startBtn.classList.remove("hidden");
+    if(d.started) loadQuestion(d);
+  });
+};
+
+function renderPlayers(p){
+  playerList.innerHTML="";
+  Object.values(p||{}).forEach(x=>playerList.innerHTML+=`<div>${x.name}</div>`);
+}
+
+window.startGame = async ()=>{
+  await update(ref(db,"rooms/"+roomCode),{started:true,questionIndex:0});
+};
+
+function loadQuestion(d){
+  waiting.classList.add("hidden"); game.classList.remove("hidden");
+  if(d.questionIndex>=questions.length){
+    questionEl.innerText="🎉 จบเกมแล้ว";
+    restartBtn.classList.remove("hidden");
+    renderScores(d.players); return;
+  }
+  questionEl.innerText=questions[d.questionIndex].q;
+  result.innerText=""; answerInput.value=""; answerInput.disabled=false;
+  renderScores(d.players);
+}
+
+window.submitAnswer = async ()=>{
+  const v=parseInt(answerInput.value); if(isNaN(v))return;
+  const roomRef=ref(db,"rooms/"+roomCode);
+  const d=(await get(roomRef)).val();
+  const q=questions[d.questionIndex];
+  let delta = v===q.a ? 10 : -5;
+  result.innerText = v===q.a ? "✅ ถูกต้อง" : "❌ ผิด เฉลย "+q.a;
+  const pRef=ref(db,"rooms/"+roomCode+"/players/"+playerId);
+  const p=(await get(pRef)).val();
+  await update(pRef,{score:(p.score||0)+delta});
+  answerInput.disabled=true;
+  if(playerId===d.host){
+    setTimeout(()=>update(roomRef,{questionIndex:d.questionIndex+1}),1500);
+  }
+};
+
+window.restartGame = ()=>location.reload();
+
+function renderScores(p){
+  scoreBoard.innerHTML="";
+  Object.values(p||{}).forEach(x=>scoreBoard.innerHTML+=`<div class="scoreRow"><span>${x.name}</span><b>${x.score}</b></div>`);
+}
+</script>
+</body>
+</html>
